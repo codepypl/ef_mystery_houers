@@ -7,62 +7,34 @@ from libs.ms_graph import MicrosoftGraph
 from config import get_email_config, get_config
 from datetime import datetime
 
-
-def send_email(file_paths: list, subject: str = None, body: str = None,
-                                recipients: list = None) -> bool:
+def send_email_with_zip(zip_path: str, subject: str = None, body: str = None,
+                        recipients: list = None):
     """
-    Wysyła jeden email z wieloma załącznikami
-
-    Args:
-        file_paths: lista ścieżek do plików (str lub Path)
-        subject: temat wiadomości (opcjonalny)
-        body: treść wiadomości (opcjonalny)
-        recipients: lista odbiorców (opcjonalna)
-
-    Returns:
-        bool: True jeśli email został wysłany pomyślnie
+    Wysyła email z jednym załącznikiem ZIP
     """
+
     logger = get_mail_logger()
-
+    graph = MicrosoftGraph()
+    email_config = get_email_config()
     try:
-        if not file_paths:
+        if not zip_path:
             logger.error("Brak plików do wysłania")
             return False
-
-        # Konwersja Path/str
-        files = [str(Path(f)) for f in file_paths]
-
-        # Sprawdzenie, czy pliki istnieją
-        for f in files:
-            if not Path(f).exists():
-                logger.error(f"Plik nie istnieje: {f}")
-                return False
-
-        # Konfiguracja
-        email_config = get_email_config()
         if recipients is None:
             recipients = email_config["recipients"]
-
         if subject is None:
             subject = f"Raporty MS_Godziny - {datetime.now().strftime('%Y-%m-%d')}"
         if body is None:
             body = f"""
             <html><body>
-            <b>Witaj!</b><br/>
-            W załączeniu przesyłamy raporty MS_Godziny wygenerowane dnia: {datetime.now().strftime('%Y-%m-%d %H:%M')}<br/>
-            Pozdrawiamy Efektum IT<br/>
-            <b>Ta wiadomość jest generowana automatycznie, nie odpowiadaj na nią!</b>
+                <b>Witaj!</b><br/>
+                W załączeniu przesyłamy raporty MS_Godziny wygenerowane dnia: {datetime.now().strftime('%Y-%m-%d %H:%M')}<br/>
+                Pozdrawiamy Efektum IT<br/>
+                <b>Ta wiadomość jest generowana automatycznie, nie odpowiadaj na nią!</b>
             </body></html>"""
-
-        # Inicjalizacja Microsoft Graph
-        graph = MicrosoftGraph()
-
-        # Wysyłka emaila
-        logger.info(f"Wysyłam email z {len(files)} załącznikami")
-        graph.send_email(subject, body, recipients, files)
-        logger.info("Email został wysłany pomyślnie")
-        return True
-
+            logger.info(f"Wysyłam email z ZIP: {Path(zip_path).name}")
+            graph.send_email(subject, body, recipients, [str(zip_path)])
+            logger.info("Email wysłany pomyślnie")
     except Exception as e:
         logger.error(f"Błąd podczas wysyłania emaila: {str(e)}")
         return False

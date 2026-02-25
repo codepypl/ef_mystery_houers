@@ -1,129 +1,76 @@
-"""
-Główny moduł do generowania raportów Mystery Hours
-"""
-from datetime import datetime
-from pathlib import Path
-import pandas as pd
+import shutil
 
-from utils.logger import get_logger, setup_logger
+from modules.send_email import send_email_with_zip
+from modules.onedrive_upload import upload_files_to_onedrive
+from modules.generate_zip import create_password_protected_zip
+from modules.structure import get_godziny_folder_id
 from libs.database import Database
-from modules.send_email import send_email
 from config import get_database_config, get_config
+from datetime import datetime
+from utils.logger import setup_logger, get_logger
+from pathlib import Path
 
-
-# =========================================================
-# GENEROWANIE RAPORTU
-# =========================================================
-def generate_report(db, report_name, report_definition):
-    """
-    Generuje pojedynczy raport na podstawie definicji SQL
-    """
-    logger = get_logger("ef_mystery_hours")
-
-    try:
-        logger.info(f"Generuję raport: {report_name}")
-        query = db.remove_tags(report_definition)
-
-        df = db.execute_sql(query, params={
-            'dates_rangefrom': datetime.now().strftime('%Y-%m-01'),
-            'dates_rangeto': datetime.now().strftime('%Y-%m-%d 23:59:59')
-        })
-
-        if df is not None and not df.empty:
-            return df
-        else:
-            logger.warning(f"Pusty raport: {report_name}")
-            return None
-
-    except Exception as e:
-        logger.error(f"Błąd raportu {report_name}: {e}")
-        return None
-
-
-# =========================================================
-# POBIERANIE DEFINICJI RAPORTÓW
-# =========================================================
-def get_reports_data(db):
-    """
-    Pobiera wszystkie raporty assign_id=30
-    """
-    query = '''
-        SELECT "Name", "Definition" 
-        FROM "Reports"."ReportDefinitions"
-        WHERE "State" = 0 AND "AssignId" = 30
-    '''
-    return db.execute_sql(query)
-
-
-# =========================================================
-# ZAPIS DO EXCEL
-# =========================================================
-def save_report_to_excel(df: pd.DataFrame, report_name: str) -> str:
-    """
-    Zapisuje df do pliku Excel w katalogu temp
-    """
-    config = get_config()
-    config.ensure_directories()
-
-    now = datetime.now()
-    filename = f"{report_name}_{now.strftime('%Y_%m_%d_%H_%M_%S')}.xlsx"
-    path = config.get_temp_file_path(filename)
-
-    df.to_excel(path, index=False)
-    return str(path)
-
-
-# =========================================================
-# MAIN
-# =========================================================
 def main():
     setup_logger()
     logger = get_logger("ef_mystery_hours")
-
-    db_config = get_database_config()
-    db = Database(db_config['url'])
+    db = Database(get_database_config()['url'])
+    config = get_config()
     if not db.connect():
         logger.error("Brak połączenia z DB")
         return False
 
-    temp_files = []
-
     try:
-        reports = get_reports_data(db)
-        if reports is None or reports.empty:
+        # pobranie raportów assign_id=30
+        reports = db.execute_sql("""
+            SELECT "Name", "Definition"
+            FROM "Reports"."ReportDefinitions"
+            WHERE "State" = 0 AND "AssignId" = 30
+        """)
+        if reports.empty:
             logger.warning("Brak raportów do wygenerowania")
             return False
 
+        # folder docelowy na OneDrive
+        godziny_folder_id = get_godziny_folder_id()
+
+        temp_files = []
         for _, r in reports.iterrows():
-            df = generate_report(db, r['Name'], r['Definition'])
-            if df is not None:
-                path = save_report_to_excel(df, r['Name'])
-                temp_files.append(path)
-                logger.info(f"Zapisano raport: {path}")
-
-        if temp_files:
-            # wysyłamy jeden email z wszystkimi raportami
-            subject = f"Podsumowanie MS_Godziny - {datetime.now().strftime('%Y-%m-%d')}"
-            body = f"Załączone raporty z kampanii MS_Godziny wygenerowane dnia {datetime.now().strftime('%Y-%m-%d %H:%M')}."
-            if send_email(temp_files, subject=subject, body=body):
-                logger.info("Email z wszystkimi raportami wysłany pomyślnie")
-            else:
-                logger.error("Nie udało się wysłać emaila z raportami")
-
-        # usuwamy wszystkie pliki tymczasowe
-        for f in temp_files:
+            df = db.execute_sql(db.remove_tags(r["Definition"]), params={
+                'dates_rangefrom': datetime.now().strftime("%Y-%m-01"),
+                'dates_rangeto': datetime.now().strftime("%Y-%m-%d 23:59:59")
+            })
+            if df.empty:
+                logger.warning(f"Pusty raport: {r['Name']}")
+                continue
+            config = get_config()
+            path = config.get_temp_file_path(f"{r['Name']}_{datetime.now().strftime('%Y_%m_%d_%H_%M_%S')}.xlsx")
+            df.to_excel(path, index=False)
             try:
-                Path(f).unlink()
-                logger.info(f"Usunięto plik tymczasowy: {f}")
+                temp_files.append(str(path))
+                logger.info(f"Zapisano raport: {path}")
             except Exception as e:
-                logger.warning(f"Nie udało się usunąć pliku {f}: {e}")
+                error_msg = f"""Problem z wygenerowaniem raportu:\r\n Plik: {path}\r\n Błąd: {e}"""
+                logger.error(error_msg)
+                return False
+        if not temp_files:
+            logger.warning("Brak wygenerowanych raportów")
+            return False
 
-        return True
+        # upload XLSX na OneDrive
+        try:
+            upload_files_to_onedrive(temp_files, godziny_folder_id)
+        except Exception as e:
+            logger.error(f"""Nie udało się wgrać pliku {temp_files[0]} na OneDrive\r\n z powodu błędu: {e}""")
 
+        # ZIP z hasłem TMPL{rok}
+        try:
+            zip_path = create_password_protected_zip(temp_files, password=f"TMPL{datetime.now().strftime('%Y').replace('2','@')}")
+            send_email_with_zip(zip_path)
+        except Exception as e:
+            logger.error(f"""Nie udało się wysłać wiadomości e-mail z powodu błędu {e}""")
     finally:
         db.disconnect()
-
-
-if __name__ == "__main__":
-    success = main()
-    exit(0 if success else 1)
+        if config.temp_dir.exists():
+            shutil.rmtree(config.temp_dir)
+            config.temp_dir.mkdir(exist_ok=True)
+            logger.info("Wyczyszczono katalog tymczasowy")

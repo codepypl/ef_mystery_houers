@@ -46,6 +46,8 @@ def setup_folder_structure() -> dict:
         # Folder dodatkowe
         additional = graph.create_folder('Dodatkowe', m_id)
         additional_id = graph.get_folder_id('Dodatkowe', m_id)
+        houers = graph.create_folder('MS_Godziny', additional_id)
+        houers_id = graph.get_folder_id('MS_Godziny', additional_id)
         
         folder_structure = {
             "year": year,
@@ -53,7 +55,8 @@ def setup_folder_structure() -> dict:
             "day": day,
             "year_id": y_id,
             "month_id": m_id,
-            "additional_id": additional_id
+            "additional_id": additional_id,
+            "houers": houers_id,
         }
         
         logger.info("Struktura folderów została utworzona pomyślnie")
@@ -64,7 +67,7 @@ def setup_folder_structure() -> dict:
         raise
 
 
-def get_additional_folder_id() -> str:
+def get_godziny_folder_id() -> str:
     """
     Pobiera ID folderu 'Dodatkowe' dla aktualnego miesiąca
     
@@ -97,22 +100,26 @@ def get_additional_folder_id() -> str:
         additional_id = graph.get_folder_id('Dodatkowe', m_id)
         if not additional_id:
             raise ValueError("Folder 'Dodatkowe' nie istnieje")
-        
-        logger.info(f"Pobrano ID folderu 'Dodatkowe': {additional_id}")
-        return additional_id
+
+        houers = graph.get_folder_id('MS_Godziny', additional_id)
+        if not houers:
+            raise ValueError("Folder 'MS_Godziny' nie istnieje")
+        logger.info(f"ID folderu 'MS_Godziny': {str(m_id)}")
+        return houers
+
         
     except Exception as e:
-        logger.error(f"Błąd podczas pobierania ID folderu 'Dodatkowe': {str(e)}")
+        logger.error(f"Błąd podczas pobierania ID folderu 'MS-Godziny': {str(e)}")
         raise
 
 
 # Inicjalizacja struktury przy imporcie modułu
 try:
     folder_structure = setup_folder_structure()
-    additional_id = folder_structure["additional_id"]
+    h = folder_structure["houers_id"]
 except Exception as e:
     # Jeśli nie udało się utworzyć struktury, spróbuj pobrać tylko ID folderu dodatkowe
     try:
-        additional_id = get_additional_folder_id()
+        h = get_godziny_folder_id()
     except Exception:
-        additional_id = None 
+        h = None
